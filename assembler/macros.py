@@ -64,7 +64,18 @@ class DAT(Macro):
     param_type_list = [TokenType.BYTE_LITERAL, TokenType.WORD_LITERAL, TokenType.STRING_LITERAL]
 
     def do(self, params):
-        pass
+        opcode = []
+        for param in params:
+            # Depending on the type of param, we generate appropriate opcode.
+            if param.type == TokenType.STRING_LITERAL:
+                # String literals are UTF-8 encoded
+                opcode.extend(param.value.encode('utf-8'))
+            elif param.type == TokenType.BYTE_LITERAL:
+                opcode.extend(param.value)
+                # Else, it is a Word Literal
+            else:
+                opcode.extend(utils.word_to_binary(param.value)) # Assuming there is a method to convert words to binary, we have to confirm.
+        return opcode
 
 
 class DATN(Macro):
@@ -82,7 +93,18 @@ class DATN(Macro):
     ]
 
     def do(self, params):
-        pass
+        # Same as DAT, but this is multiplied N times
+        opcodeN = []
+        # Depending on the type of param, we generate appropriate opcode and multiply it with N
+        if params[1].type == TokenType.STRING_LITERAL:
+            # String literals are UTF-8 encoded
+            opcodeN = list(params[1].value.encode('utf-8'))
+        elif params[1].type == TokenType.BYTE_LITERAL:
+            opcodeN = list(params[1].value)
+            # Else, it is a Word Literal
+        else:
+            opcodeN = list(utils.word_to_binary(params[1].value)) # Assuming there is a method to convert words to binary, we have to confirm.
+        return opcodeN * params[0].value
 
 
 class CONST(Macro):
@@ -100,7 +122,14 @@ class CONST(Macro):
     ]
 
     def do(self, params):
-        pass
+        # In assembly language, variable declaration in this context doesn't translate into actual
+        # machine code but rather informs the assembler how to substitute the variable in the code.
+        const_name, const_value = params[0], params[1]
+        if const_name.type != TokenType.VARIABLE:
+            self._raise_macro_error(const_name.pos, f"Expected a variable, got {const_name.type}")
+        # Register the constant in the assembler and return an empty opcode since CONST doesn't translate directly to machine code
+        self.assembler.register_constant(const_name.value, const_value) # Assuming assembler has a registration system like this, we have to explore and confirm this one.
+        return []
 
 
 class PARAM(Macro):
