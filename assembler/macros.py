@@ -146,7 +146,17 @@ class PARAM(Macro):
     ]
 
     def do(self, params):
-        pass
+        if self.assembler.current_scope is None:
+            self._raise_macro_error(params[0].pos, 'No scope defined for parameters.')
+            
+        param_name = params[0]
+        if self.assembler.is_variable_defined(param_name.value):
+            self._raise_macro_error(param_name.pos, f"Expected a variable for parameter, got {param_name.type}")
+        try:
+            self.assembler.current_scope.add_parameter(param_name.value, self.length)
+        except:
+            self._raise_error(None, "Error adding parameter to the Scope", None)
+        return []
 
 
 class PARAMB(PARAM):
@@ -174,7 +184,25 @@ class VAR(Macro):
     ]
 
     def do(self, params):
-        pass
+        if self.assembler.current_scope is None:
+            self._raise_macro_error(params[0].pos, 'No scope defined for variables.')
+
+        name = params[0]
+        default_value = params[1] if len(params) > 1 else None # VAR might or might not have a default value.
+        if default_value.type != TokenType.VARIABLE:
+            self._raise_macro_error(var_name.pos, f"Expected a variable for local variable assignment, got {var_name.type}")
+        else:
+            default_value = self.assembler.substitute_variable(default_value, self.source_line, self.line_number)    
+        # Default value currently ignored, as we do not have a mechanism yet to
+        # assign it at this level. We validate its type, but ignore it afterwards.
+        if default_value and default_value.type not in {TokenType.WORD_LITERAL, TokenType.BYTE_LITERAL}:
+            self._raise_macro_error(default_value.pos, f'Invalid default value type: {default_value.type}')
+        self.assembler.current_scope.add_variable(var_name.value, self.length)
+        # Default value won't change the opcode, but we should record it in the scope anyway.
+        if default_value is not None:
+            # TODO: Register this somewhere? Likely in the scope or in an instruction dictionary.
+            # For now, we don't see anywhere this would be used immediately so we leave it blank.
+        return []
 
 
 class VARB(VAR):
