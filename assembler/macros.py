@@ -202,6 +202,7 @@ class VAR(Macro):
         if default_value is not None:
             # TODO: Register this somewhere? Likely in the scope or in an instruction dictionary.
             # For now, we don't see anywhere this would be used immediately so we leave it blank.
+            pass
         return []
 
 
