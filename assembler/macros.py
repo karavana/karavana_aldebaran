@@ -33,8 +33,23 @@ class Macro:
         '''
         Validate parameters, run macro, return generated opcode
         '''
-        # validate parameter count
-        pass
+        # Validate parameter count
+        min_param_count, max_param_count = self.param_count
+        if not(min_param_count is not None and max_param_count is not None and min_param_count <= len(params) <= max_param_count):
+            self._raise_macro_error(params[0].pos if params else None,
+                                    f"Expected {min_param_count}-{max_param_count} params, got {len(params)}")
+        
+        # Substitute variables in parameters if necessary
+        if self.substitute_variables_in_params == 'all':
+            params = self.assembler.substitute_variable(param, self.source_line, self.line_number)
+        elif self.substitute_variables_in_params:
+            params = [self.assembler.substitute_variable(param, self.source_line, self.line_number) if i+1 in self.substitute_variables_in_params and param.type == TokenType.VARIABLE else param for i, param in enumerate(params)]
+
+        # Validate each parameter against type lists
+        for i, param in enumerate(params):
+            self._validate_parameter(param, self.param_types[i], param_number=i)
+
+        return self.do(params)
 
     def do(self, params):
         '''
@@ -43,13 +58,19 @@ class Macro:
         pass
 
     def _validate_parameter(self, param, param_type_list, param_number=None):
-        pass
+        if not param:
+            self._raise_macro_error(None, "Parameter is None")
+        if param.type not in param_type_list:
+            self._raise_macro_error(
+                param.pos,
+                f"Param {param_number} expected type in {param_type_list}, got {param.type}"
+            )
 
-    def _raise_macro_error(self, pos, error_message):
-        pass
+    def _raise_macro_error(self, position, message):
+        self._raise_error(position, message, MacroError)
 
-    def _raise_error(self, pos, error_message, exception):
-        pass
+    def _raise_error(self, position, message, error_type=AssemblerError):
+        self._raise_error(self.source_line, self.line_number, position, message, error_type)
 
 
 class DAT(Macro):
@@ -128,7 +149,7 @@ class CONST(Macro):
         if const_name.type != TokenType.VARIABLE:
             self._raise_macro_error(const_name.pos, f"Expected a variable, got {const_name.type}")
         # Register the constant in the assembler and return an empty opcode since CONST doesn't translate directly to machine code
-        self.assembler.register_constant(const_name.value, const_value) # Assuming assembler has a registration system like this, we have to explore and confirm this one.
+        self.assembler.const[const_name.value] = const_value
         return []
 
 
@@ -185,24 +206,35 @@ class VAR(Macro):
 
     def do(self, params):
         if self.assembler.current_scope is None:
-            self._raise_macro_error(params[0].pos, 'No scope defined for variables.')
-
-        name = params[0]
-        default_value = params[1] if len(params) > 1 else None # VAR might or might not have a default value.
-        if default_value.type != TokenType.VARIABLE:
-            self._raise_macro_error(var_name.pos, f"Expected a variable for local variable assignment, got {var_name.type}")
+            self._raise_macro_error(None, 'Macro {} must be in a scope'.format(self.name))
+        if len(params) == 1:
+            name_param = params[0]
+            default_value_param = None
         else:
-            default_value = self.assembler.substitute_variable(default_value, self.source_line, self.line_number)    
-        # Default value currently ignored, as we do not have a mechanism yet to
-        # assign it at this level. We validate its type, but ignore it afterwards.
-        if default_value and default_value.type not in {TokenType.WORD_LITERAL, TokenType.BYTE_LITERAL}:
-            self._raise_macro_error(default_value.pos, f'Invalid default value type: {default_value.type}')
-        self.assembler.current_scope.add_variable(var_name.value, self.length)
-        # Default value won't change the opcode, but we should record it in the scope anyway.
-        if default_value is not None:
-            # TODO: Register this somewhere? Likely in the scope or in an instruction dictionary.
-            # For now, we don't see anywhere this would be used immediately so we leave it blank.
-            pass
+            name_param, default_value_param = params
+            if default_value_param.type == TokenType.VARIABLE:
+                default_value_param = self.assembler.substitute_variable(default_value_param, self.source_line, self.line_number)
+            self._validate_parameter(default_value_param, [TokenType.WORD_LITERAL if self.length == 2 else TokenType.BYTE_LITERAL], 2)
+
+        if self.assembler.is_variable_defined(name_param.value):
+            self._raise_error(name_param.pos, 'Variable {} already defined'.format(name_param.value), VariableError)
+
+        try:
+            self.assembler.current_scope.add_variable(name_param.value, self.length)
+        except ScopeError as ex:
+            self._raise_error(None, str(ex), ScopeError)
+
+        if default_value_param is not None:
+            # MOV $var default_value
+            inst_opcode, _ = self.assembler.instruction_mapping['MOV']
+            opcode = [inst_opcode]
+            opcode += get_operand_opcode(self.assembler.current_scope.get_value(name_param.value))
+            opcode += get_operand_opcode(Token(
+                default_value_param.type,
+                default_value_param.value,
+                None,
+            ))
+            return opcode
         return []
 
 
@@ -229,7 +261,11 @@ MACRO_SET = {
 
 
 def _raise_error(code, line_number, pos, error_message, exception):
-    pass
+    """
+    Raise specific error class with detailed information.
+    """
+    full_message = f"Error at line {line_number}, pos {pos}: {message}"
+    raise exception(full_message)
 
 
 def _param_count_string(cnt):
