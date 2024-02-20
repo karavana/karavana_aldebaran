@@ -35,19 +35,30 @@ class Macro:
         '''
         # Validate parameter count
         min_param_count, max_param_count = self.param_count
-        if not(min_param_count is not None and max_param_count is not None and min_param_count <= len(params) <= max_param_count):
-            self._raise_macro_error(params[0].pos if params else None,
-                                    f"Expected {min_param_count}-{max_param_count} params, got {len(params)}")
+        if not ((min_param_count is None or min_param_count <= len(params)) and (max_param_count is None or len(params) <= max_param_count)):
+            error_message = "Expected "
+            if min_param_count == max_param_count:
+                error_message += f"{min_param_count} params"
+            elif max_param_count is None:
+                error_message += f"at least {min_param_count} params"
+            else:
+                error_message += f"{min_param_count}-{max_param_count} params"
+            error_message += f", got {len(params)}"
+            self._raise_macro_error(params[0].pos if params else None, error_message)
+
         
         # Substitute variables in parameters if necessary
         if self.substitute_variables_in_params == 'all':
-            params = self.assembler.substitute_variable(param, self.source_line, self.line_number)
+            params = [self.assembler.substitute_variable(p, self.source_line, self.line_number) if p.type == TokenType.VARIABLE else p for p in params]
         elif self.substitute_variables_in_params:
-            params = [self.assembler.substitute_variable(param, self.source_line, self.line_number) if i+1 in self.substitute_variables_in_params and param.type == TokenType.VARIABLE else param for i, param in enumerate(params)]
+            params = [self.assembler.substitute_variable(p, self.source_line, self.line_number) if i+1 in self.substitute_variables_in_params and p.type == TokenType.VARIABLE else p for i, p in enumerate(params)]
 
         # Validate each parameter against type lists
         for i, param in enumerate(params):
-            self._validate_parameter(param, self.param_types[i], param_number=i)
+            if self.param_types and i < len(self.param_types):
+                self._validate_parameter(param, self.param_types[i], param_number=i)
+            elif self.param_type_list and param.type not in self.param_type_list:
+                self._raise_macro_error(param.pos, f"Param {i} expected type in {self.param_type_list}, got {param.type}")
 
         return self.do(params)
 
@@ -70,7 +81,7 @@ class Macro:
         self._raise_error(position, message, MacroError)
 
     def _raise_error(self, position, message, error_type=AldebaranError):
-        self._raise_error(self.source_line, self.line_number, position, message, error_type)
+        _raise_error(self.source_line, self.line_number, position, message, error_type)
 
 
 class DAT(Macro):
@@ -147,6 +158,9 @@ class CONST(Macro):
         const_name, const_value = params[0], params[1]
         if const_name.type != TokenType.VARIABLE:
             self._raise_error(const_name.pos, f"Expected a variable, got {const_name.type}", VariableError)
+        # Check if the constant is being redefined, which should not happen
+        if self.assembler.is_variable_defined(const_name.value):
+            self._raise_error(const_name.pos, f"Constant {const_name.value} is already defined", VariableError)
         # Register the constant in the assembler and return an empty opcode since CONST doesn't translate directly to machine code
         self.assembler.consts[const_name.value] = const_value
         return []
@@ -254,7 +268,7 @@ def _raise_error(code, line_number, pos, error_message, exception):
     """
     Raise specific error class with detailed information.
     """
-    full_message = f"Error at line {line_number}, pos {pos}: {message}"
+    full_message = f"Error at line {line_number}, pos {pos}: {error_message}"
     raise exception(full_message)
 
 
