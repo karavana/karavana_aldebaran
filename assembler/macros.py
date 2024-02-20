@@ -55,7 +55,7 @@ class Macro:
         '''
         Run macro, return generated opcode
         '''
-        pass
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def _validate_parameter(self, param, param_type_list, param_number=None):
         if not param:
@@ -69,7 +69,7 @@ class Macro:
     def _raise_macro_error(self, position, message):
         self._raise_error(position, message, MacroError)
 
-    def _raise_error(self, position, message, error_type=AssemblerError):
+    def _raise_error(self, position, message, error_type=AldebaranError):
         self._raise_error(self.source_line, self.line_number, position, message, error_type)
 
 
@@ -127,7 +127,6 @@ class DATN(Macro):
             opcodeN = list(utils.word_to_binary(params[1].value)) # Assuming there is a method to convert words to binary, we have to confirm.
         return opcodeN * params[0].value
 
-
 class CONST(Macro):
     '''
     .CONST <name> <value>
@@ -147,9 +146,9 @@ class CONST(Macro):
         # machine code but rather informs the assembler how to substitute the variable in the code.
         const_name, const_value = params[0], params[1]
         if const_name.type != TokenType.VARIABLE:
-            self._raise_macro_error(const_name.pos, f"Expected a variable, got {const_name.type}")
+            self._raise_error(const_name.pos, f"Expected a variable, got {const_name.type}", VariableError)
         # Register the constant in the assembler and return an empty opcode since CONST doesn't translate directly to machine code
-        self.assembler.const[const_name.value] = const_value
+        self.assembler.consts[const_name.value] = const_value
         return []
 
 
@@ -172,11 +171,11 @@ class PARAM(Macro):
             
         param_name = params[0]
         if self.assembler.is_variable_defined(param_name.value):
-            self._raise_macro_error(param_name.pos, f"Expected a variable for parameter, got {param_name.type}")
+            self._raise_error(param_name.pos, f"Expected a variable for parameter, got {param_name.type}", VariableError)
         try:
             self.assembler.current_scope.add_parameter(param_name.value, self.length)
         except:
-            self._raise_error(None, "Error adding parameter to the Scope", None)
+            self._raise_error(None, "Error adding parameter to the Scope", ScopeError)
         return []
 
 
@@ -206,36 +205,27 @@ class VAR(Macro):
 
     def do(self, params):
         if self.assembler.current_scope is None:
-            self._raise_macro_error(None, 'Macro {} must be in a scope'.format(self.name))
-        if len(params) == 1:
-            name_param = params[0]
-            default_value_param = None
-        else:
-            name_param, default_value_param = params
-            if default_value_param.type == TokenType.VARIABLE:
-                default_value_param = self.assembler.substitute_variable(default_value_param, self.source_line, self.line_number)
-            self._validate_parameter(default_value_param, [TokenType.WORD_LITERAL if self.length == 2 else TokenType.BYTE_LITERAL], 2)
+            self._raise_macro_error(params[0].pos, 'No scope defined for variables.')
 
-        if self.assembler.is_variable_defined(name_param.value):
-            self._raise_error(name_param.pos, 'Variable {} already defined'.format(name_param.value), VariableError)
+        name = params[0]
+        default_value = None
+        opcode = []
 
-        try:
-            self.assembler.current_scope.add_variable(name_param.value, self.length)
-        except ScopeError as ex:
-            self._raise_error(None, str(ex), ScopeError)
-
-        if default_value_param is not None:
-            # MOV $var default_value
-            inst_opcode, _ = self.assembler.instruction_mapping['MOV']
-            opcode = [inst_opcode]
-            opcode += get_operand_opcode(self.assembler.current_scope.get_value(name_param.value))
-            opcode += get_operand_opcode(Token(
-                default_value_param.type,
-                default_value_param.value,
-                None,
-            ))
-            return opcode
-        return []
+        if len(params) > 1:
+            default_value = params[1]
+            if default_value.type == TokenType.VARIABLE:
+                # Substitute the variable to its value
+                default_value = self.assembler.substitute_variable(default_value, self.source_line, self.line_number)
+            if default_value.type not in {TokenType.WORD_LITERAL, TokenType.BYTE_LITERAL}:
+                self._raise_macro_error(default_value.pos, f'Invalid default value type: {default_value.type}')
+            try:
+                self.assembler.current_scope.add_variable(name.value, self.length)
+            except:
+                self._raise_error(None, "Error adding parameter to the Scope", ScopeError)
+            # We would return a reference token for the default value.
+            opcode += [self.assembler.current_scope.get_value(name.value)]
+        
+        return opcode
 
 
 class VARB(VAR):
