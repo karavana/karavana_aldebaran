@@ -45,7 +45,6 @@ class Macro:
                 error_message += f"{min_param_count}-{max_param_count} params"
             error_message += f", got {len(params)}"
             self._raise_macro_error(params[0].pos if params else None, error_message)
-
         
         # Substitute variables in parameters if necessary
         if self.substitute_variables_in_params == 'all':
@@ -103,7 +102,7 @@ class DAT(Macro):
                 # String literals are UTF-8 encoded
                 opcode.extend(param.value.encode('utf-8'))
             elif param.type == TokenType.BYTE_LITERAL:
-                opcode.extend(param.value)
+                opcode.append(param.value)
                 # Else, it is a Word Literal
             else:
                 opcode.extend(utils.word_to_binary(param.value)) # Assuming there is a method to convert words to binary, we have to confirm.
@@ -132,7 +131,7 @@ class DATN(Macro):
             # String literals are UTF-8 encoded
             opcodeN = list(params[1].value.encode('utf-8'))
         elif params[1].type == TokenType.BYTE_LITERAL:
-            opcodeN = list(params[1].value)
+            opcodeN.append(params[1].value)
             # Else, it is a Word Literal
         else:
             opcodeN = list(utils.word_to_binary(params[1].value)) # Assuming there is a method to convert words to binary, we have to confirm.
@@ -232,12 +231,20 @@ class VAR(Macro):
                 default_value = self.assembler.substitute_variable(default_value, self.source_line, self.line_number)
             if default_value.type not in {TokenType.WORD_LITERAL, TokenType.BYTE_LITERAL}:
                 self._raise_macro_error(default_value.pos, f'Invalid default value type: {default_value.type}')
-            try:
-                self.assembler.current_scope.add_variable(name.value, self.length)
-            except:
-                self._raise_error(None, "Error adding parameter to the Scope", ScopeError)
+        try:
+            self.assembler.current_scope.add_variable(name.value, self.length)
+        except:
+            self._raise_error(None, "Error adding variable to the Scope", ScopeError)
+
+        # Get the instruction opcode
+        inst_opcode, inst = self.assembler.instruction_mapping['MOV']
+        
+        if default_value:
             # We would return a reference token for the default value.
-            opcode += [self.assembler.current_scope.get_value(name.value)]
+            opcode += [inst_opcode]
+            scope_value = self.assembler.current_scope.get_value(name.value)
+            opcode += get_operand_opcode(scope_value)
+            opcode += get_operand_opcode(Token(default_value.type, default_value.value, None))
         
         return opcode
 
